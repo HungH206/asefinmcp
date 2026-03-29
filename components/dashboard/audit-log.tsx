@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { 
   KeyRound, 
   Fingerprint, 
@@ -11,6 +12,7 @@ import {
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import type { AuditEntryData } from "@/lib/backend/types"
 import {
   Table,
   TableBody,
@@ -29,48 +31,20 @@ interface AuditEntry {
   icon: React.ReactNode
 }
 
-const auditEntries: AuditEntry[] = [
-  {
-    id: "1",
-    action: "Token Requested from Vault",
-    status: "success",
-    timestamp: "09:16:42 AM",
-    actor: "Narrator Agent",
-    icon: <KeyRound className="h-4 w-4" />,
-  },
-  {
-    id: "2",
-    action: "MFA Verification Completed",
-    status: "success",
-    timestamp: "09:15:18 AM",
-    actor: "John Doe",
-    icon: <Fingerprint className="h-4 w-4" />,
-  },
-  {
-    id: "3",
-    action: "Market Data Fetched via MCP",
-    status: "success",
-    timestamp: "09:14:55 AM",
-    actor: "Market Feed Service",
-    icon: <BarChart3 className="h-4 w-4" />,
-  },
-  {
-    id: "4",
-    action: "Portfolio Analysis Generated",
-    status: "success",
-    timestamp: "09:14:23 AM",
-    actor: "Narrator Agent",
-    icon: <FileText className="h-4 w-4" />,
-  },
-  {
-    id: "5",
-    action: "Session Authenticated via Auth0",
-    status: "success",
-    timestamp: "09:00:12 AM",
-    actor: "John Doe",
-    icon: <Shield className="h-4 w-4" />,
-  },
-]
+function auditIcon(eventType: AuditEntryData["eventType"]): React.ReactNode {
+  switch (eventType) {
+    case "vault":
+      return <KeyRound className="h-4 w-4" />
+    case "mfa":
+      return <Fingerprint className="h-4 w-4" />
+    case "market":
+      return <BarChart3 className="h-4 w-4" />
+    case "report":
+      return <FileText className="h-4 w-4" />
+    case "auth":
+      return <Shield className="h-4 w-4" />
+  }
+}
 
 function StatusBadge({ status }: { status: AuditEntry["status"] }) {
   const variants = {
@@ -94,6 +68,39 @@ function StatusBadge({ status }: { status: AuditEntry["status"] }) {
 }
 
 export function AuditLog() {
+  const [entries, setEntries] = useState<AuditEntryData[]>([])
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+
+    const loadEntries = async () => {
+      try {
+        const response = await fetch("/api/audit")
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch audit logs")
+        }
+
+        const data = (await response.json()) as { entries: AuditEntryData[] }
+
+        if (mounted) {
+          setEntries(data.entries)
+        }
+      } catch {
+        if (mounted) {
+          setError("Could not load audit logs")
+        }
+      }
+    }
+
+    void loadEntries()
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
   return (
     <Card className="bg-card/50 border-border/50">
       <CardHeader className="pb-3">
@@ -120,12 +127,12 @@ export function AuditLog() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {auditEntries.map((entry) => (
+              {entries.map((entry) => (
                 <TableRow key={entry.id} className="hover:bg-secondary/30">
                   <TableCell className="py-3">
                     <div className="flex items-center gap-2">
                       <div className="flex h-7 w-7 items-center justify-center rounded-md bg-secondary border border-border/50">
-                        {entry.icon}
+                        {auditIcon(entry.eventType)}
                       </div>
                       <span className="text-sm font-medium">{entry.action}</span>
                     </div>
@@ -141,6 +148,20 @@ export function AuditLog() {
                   </TableCell>
                 </TableRow>
               ))}
+              {entries.length === 0 && !error && (
+                <TableRow>
+                  <TableCell colSpan={4} className="py-6 text-center text-sm text-muted-foreground">
+                    Loading audit logs...
+                  </TableCell>
+                </TableRow>
+              )}
+              {error && (
+                <TableRow>
+                  <TableCell colSpan={4} className="py-6 text-center text-sm text-destructive">
+                    {error}
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </div>

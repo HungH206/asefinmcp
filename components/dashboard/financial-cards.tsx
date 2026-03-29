@@ -1,8 +1,10 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { TrendingUp, TrendingDown, Activity, DollarSign, BarChart3, RefreshCw } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import type { FinancialCardData } from "@/lib/backend/types"
 
 interface FinancialCardProps {
   title: string
@@ -47,41 +49,82 @@ function FinancialCard({ title, value, change, changeLabel, icon, lastUpdate }: 
   )
 }
 
+function metricIcon(metric: FinancialCardData["metric"]): React.ReactNode {
+  switch (metric) {
+    case "price":
+      return <DollarSign className="h-4 w-4 text-primary" />
+    case "portfolio":
+      return <BarChart3 className="h-4 w-4 text-accent" />
+    case "volatility":
+      return <Activity className="h-4 w-4 text-warning" />
+    case "risk":
+      return <TrendingUp className="h-4 w-4 text-primary" />
+  }
+}
+
 export function FinancialCards() {
+  const [cards, setCards] = useState<FinancialCardData[]>([])
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+
+    const loadCards = async () => {
+      try {
+        const response = await fetch("/api/market")
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch market data")
+        }
+
+        const data = (await response.json()) as { cards: FinancialCardData[] }
+
+        if (mounted) {
+          setCards(data.cards)
+        }
+      } catch {
+        if (mounted) {
+          setError("Could not load market data")
+        }
+      }
+    }
+
+    void loadCards()
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  if (error) {
+    return (
+      <Card className="bg-card/50 border-border/50">
+        <CardContent className="py-6 text-sm text-destructive">{error}</CardContent>
+      </Card>
+    )
+  }
+
+  if (cards.length === 0) {
+    return (
+      <Card className="bg-card/50 border-border/50">
+        <CardContent className="py-6 text-sm text-muted-foreground">Loading market data...</CardContent>
+      </Card>
+    )
+  }
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-      <FinancialCard
-        title="AAPL Price"
-        value="$189.84"
-        change={2.34}
-        changeLabel="vs. yesterday close"
-        icon={<DollarSign className="h-4 w-4 text-primary" />}
-        lastUpdate="2s ago"
-      />
-      <FinancialCard
-        title="Portfolio Value"
-        value="$1.24M"
-        change={1.87}
-        changeLabel="24h change"
-        icon={<BarChart3 className="h-4 w-4 text-accent" />}
-        lastUpdate="5s ago"
-      />
-      <FinancialCard
-        title="Portfolio Volatility"
-        value="14.2%"
-        change={-0.8}
-        changeLabel="vs. market avg"
-        icon={<Activity className="h-4 w-4 text-warning" />}
-        lastUpdate="10s ago"
-      />
-      <FinancialCard
-        title="Risk Score"
-        value="Low"
-        change={5.2}
-        changeLabel="improved this week"
-        icon={<TrendingUp className="h-4 w-4 text-primary" />}
-        lastUpdate="1m ago"
-      />
+      {cards.map((card) => (
+        <FinancialCard
+          key={card.id}
+          title={card.title}
+          value={card.value}
+          change={card.change}
+          changeLabel={card.changeLabel}
+          icon={metricIcon(card.metric)}
+          lastUpdate={card.lastUpdate}
+        />
+      ))}
     </div>
   )
 }

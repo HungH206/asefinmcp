@@ -1,69 +1,15 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Bot, User, Send, Sparkles, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
+import type { ChatMessageData, ChatResponse } from "@/lib/backend/types"
+import { callAsefinTool } from "@/lib/backend/mcp-client" // Ensure this path exists
 
-interface Message {
-  id: string
-  role: "user" | "agent"
-  content: string
-  timestamp: string
-  metadata?: {
-    source?: string
-    confidence?: number
-    action?: string
-  }
-}
-
-const initialMessages: Message[] = [
-  {
-    id: "1",
-    role: "agent",
-    content: "Good morning. I&apos;ve completed my initial analysis of your portfolio. Your current exposure shows strong performance in tech equities, but I&apos;ve identified some volatility concerns in your emerging market positions.",
-    timestamp: "09:14 AM",
-    metadata: {
-      source: "Portfolio Analysis Engine",
-      confidence: 94,
-    },
-  },
-  {
-    id: "2",
-    role: "user",
-    content: "Can you show me the current status of my AAPL holdings and any recommendations?",
-    timestamp: "09:15 AM",
-  },
-  {
-    id: "3",
-    role: "agent",
-    content: "Your AAPL position currently represents 12.4% of your portfolio with an unrealized gain of +23.7% since acquisition. Based on current market conditions and your risk profile, I recommend maintaining your position but setting a trailing stop-loss at 8% below current price to protect gains.",
-    timestamp: "09:15 AM",
-    metadata: {
-      source: "Risk Assessment Module",
-      confidence: 89,
-    },
-  },
-  {
-    id: "4",
-    role: "user",
-    content: "Generate a detailed performance report and email it to my accountant.",
-    timestamp: "09:16 AM",
-  },
-  {
-    id: "5",
-    role: "agent",
-    content: "I can prepare the performance report. However, sending it via email requires additional verification as this is classified as a high-stakes action involving external data transmission. Please complete MFA verification to proceed.",
-    timestamp: "09:16 AM",
-    metadata: {
-      action: "high-stakes",
-    },
-  },
-]
-
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message }: { message: ChatMessageData }) {
   const isAgent = message.role === "agent"
   const isHighStakes = message.metadata?.action === "high-stakes"
 
@@ -128,8 +74,103 @@ function MessageBubble({ message }: { message: Message }) {
 }
 
 export function ChatInterface() {
-  const [messages] = useState<Message[]>(initialMessages)
+  const [messages, setMessages] = useState<ChatMessageData[]>([])
   const [input, setInput] = useState("")
+  const [isSending, setIsSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+
+    const loadMessages = async () => {
+      try {
+        const response = await fetch("/api/chat")
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch conversation")
+        }
+
+        const data = (await response.json()) as { messages: ChatMessageData[] }
+
+        if (mounted) {
+          setMessages(data.messages)
+        }
+      } catch {
+        if (mounted) {
+          setError("Could not load conversation")
+        }
+      }
+    }
+
+    void loadMessages()
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  const sendMessage = async () => {
+    const message = input.trim()
+    if (!message || isSending) return
+
+    setIsSending(true)
+    setError(null)
+
+    try {
+      // 1. Initial request to your Next.js AI route
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message }),
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to send chat request")
+      }
+
+      const data = (await response.json()) as ChatResponse & {
+        toolCall?: { name: string; args?: unknown }
+      }
+
+      // 2. CHECK FOR TOOL CALLS: If the AI wants to use an MCP Tool (e.g., get_balance)
+      if (data.toolCall) {
+        try {
+          const toolResult = (await callAsefinTool(data.toolCall.name, data.toolCall.args)) as {
+            result?: string
+          }
+
+          // Add the tool result to your message state
+          setMessages((current) => [
+            ...current,
+            data.userMessage,
+            {
+              id: Date.now().toString(),
+              role: "agent",
+              content: `Analysis Complete: ${toolResult.result ?? "No result returned"}`,
+              metadata: { source: "ASEFIN Vault", confidence: 98 },
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            },
+          ])
+        } catch (err: unknown) {
+          // 3. STEP-UP AUTH TRIGGER: If the tool returns 401/MFA required
+          if (err instanceof Error && err.message === "MFA_REQUIRED") {
+            setError("Action Blocked: Please complete MFA verification.")
+            // Trigger your Auth0 MFA popup here
+          } else {
+            setError("Tool call failed")
+          }
+        }
+      } else {
+        setMessages((current) => [...current, data.userMessage, data.agentMessage])
+      }
+
+      setInput("")
+    } catch {
+      setError("Unable to connect to ASEFIN backend")
+    } finally {
+      setIsSending(false)
+    }
+  }
 
   return (
     <div className="flex flex-col h-full border border-border/50 rounded-lg bg-card/50 overflow-hidden">
@@ -154,6 +195,10 @@ export function ChatInterface() {
           {messages.map((message) => (
             <MessageBubble key={message.id} message={message} />
           ))}
+          {messages.length === 0 && !error && (
+            <p className="text-sm text-muted-foreground">Loading conversation...</p>
+          )}
+          {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
       </ScrollArea>
 
@@ -163,9 +208,21 @@ export function ChatInterface() {
             placeholder="Ask the Narrator for financial insights..."
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault()
+                void sendMessage()
+              }
+            }}
             className="flex-1 bg-background border-border/50 focus-visible:ring-primary/50"
           />
-          <Button className="bg-primary text-primary-foreground hover:bg-primary/90">
+          <Button
+            onClick={() => {
+              void sendMessage()
+            }}
+            disabled={isSending}
+            className="bg-primary text-primary-foreground hover:bg-primary/90"
+          >
             <Send className="h-4 w-4" />
           </Button>
         </div>

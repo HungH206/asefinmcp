@@ -51,49 +51,37 @@ function FinancialCard({ title, value, change, changeLabel, icon, lastUpdate }: 
 
 function metricIcon(metric: FinancialCardData["metric"]): React.ReactNode {
   switch (metric) {
-    case "price":
-      return <DollarSign className="h-4 w-4 text-primary" />
-    case "portfolio":
-      return <BarChart3 className="h-4 w-4 text-accent" />
-    case "volatility":
-      return <Activity className="h-4 w-4 text-warning" />
-    case "risk":
-      return <TrendingUp className="h-4 w-4 text-primary" />
+    case "price":    return <DollarSign className="h-4 w-4 text-primary" />
+    case "portfolio": return <BarChart3 className="h-4 w-4 text-accent" />
+    case "volatility": return <Activity className="h-4 w-4 text-warning" />
+    case "risk":     return <TrendingUp className="h-4 w-4 text-primary" />
   }
 }
 
 export function FinancialCards() {
   const [cards, setCards] = useState<FinancialCardData[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  const loadCards = async (showSpinner = false) => {
+    if (showSpinner) setIsRefreshing(true)
+    try {
+      const response = await fetch("/api/market")
+      if (!response.ok) throw new Error("Failed to fetch market data")
+      const data = (await response.json()) as { cards: FinancialCardData[] }
+      setCards(data.cards)
+      setError(null)
+    } catch {
+      setError("Could not load market data")
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
 
   useEffect(() => {
-    let mounted = true
-
-    const loadCards = async () => {
-      try {
-        const response = await fetch("/api/market")
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch market data")
-        }
-
-        const data = (await response.json()) as { cards: FinancialCardData[] }
-
-        if (mounted) {
-          setCards(data.cards)
-        }
-      } catch {
-        if (mounted) {
-          setError("Could not load market data")
-        }
-      }
-    }
-
     void loadCards()
-
-    return () => {
-      mounted = false
-    }
+    const interval = setInterval(() => { void loadCards(true) }, 30000)
+    return () => clearInterval(interval)
   }, [])
 
   if (error) {
@@ -113,18 +101,30 @@ export function FinancialCards() {
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-      {cards.map((card) => (
-        <FinancialCard
-          key={card.id}
-          title={card.title}
-          value={card.value}
-          change={card.change}
-          changeLabel={card.changeLabel}
-          icon={metricIcon(card.metric)}
-          lastUpdate={card.lastUpdate}
-        />
-      ))}
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">Auto-refreshes every 30s</span>
+        <button
+          onClick={() => void loadCards(true)}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <RefreshCw className={`h-3 w-3 ${isRefreshing ? "animate-spin text-primary" : ""}`} />
+          {isRefreshing ? "Refreshing..." : "Refresh"}
+        </button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        {cards.map((card) => (
+          <FinancialCard
+            key={card.id}
+            title={card.title}
+            value={card.value}
+            change={card.change}
+            changeLabel={card.changeLabel}
+            icon={metricIcon(card.metric)}
+            lastUpdate={card.lastUpdate}
+          />
+        ))}
+      </div>
     </div>
   )
 }

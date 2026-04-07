@@ -1,14 +1,15 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { 
-  KeyRound, 
-  Fingerprint, 
-  BarChart3, 
-  FileText, 
+import { useEffect, useRef, useState } from "react"
+import {
+  KeyRound,
+  Fingerprint,
+  BarChart3,
+  FileText,
   CheckCircle2,
+  XCircle,
   Clock,
-  Shield
+  Shield,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -52,16 +53,12 @@ function StatusBadge({ status }: { status: AuditEntry["status"] }) {
     pending: "bg-warning/10 text-warning border-warning/20",
     denied: "bg-destructive/10 text-destructive border-destructive/20",
   }
-
-  const labels = {
-    success: "Success",
-    pending: "Pending",
-    denied: "Denied",
-  }
+  const labels = { success: "Success", pending: "Pending", denied: "Denied" }
 
   return (
     <Badge className={`${variants[status]} text-xs font-medium`}>
       {status === "success" && <CheckCircle2 className="h-3 w-3 mr-1" />}
+      {status === "denied" && <XCircle className="h-3 w-3 mr-1" />}
       {labels[status]}
     </Badge>
   )
@@ -70,6 +67,8 @@ function StatusBadge({ status }: { status: AuditEntry["status"] }) {
 export function AuditLog() {
   const [entries, setEntries] = useState<AuditEntryData[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [newIds, setNewIds] = useState<Set<string>>(new Set())
+  const prevIdsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     let mounted = true
@@ -77,27 +76,31 @@ export function AuditLog() {
     const loadEntries = async () => {
       try {
         const response = await fetch("/api/audit")
-
-        if (!response.ok) {
-          throw new Error("Failed to fetch audit logs")
-        }
-
+        if (!response.ok) throw new Error("Failed to fetch audit logs")
         const data = (await response.json()) as { entries: AuditEntryData[] }
+        if (!mounted) return
 
-        if (mounted) {
-          setEntries(data.entries)
+        const incoming = data.entries
+        const fresh = incoming.filter((e) => !prevIdsRef.current.has(e.id)).map((e) => e.id)
+
+        if (fresh.length > 0) {
+          setNewIds(new Set(fresh))
+          setTimeout(() => setNewIds(new Set()), 2000)
         }
+
+        prevIdsRef.current = new Set(incoming.map((e) => e.id))
+        setEntries(incoming)
       } catch {
-        if (mounted) {
-          setError("Could not load audit logs")
-        }
+        if (mounted) setError("Could not load audit logs")
       }
     }
 
     void loadEntries()
+    const interval = setInterval(() => { void loadEntries() }, 3000)
 
     return () => {
       mounted = false
+      clearInterval(interval)
     }
   }, [])
 
@@ -128,7 +131,12 @@ export function AuditLog() {
             </TableHeader>
             <TableBody>
               {entries.map((entry) => (
-                <TableRow key={entry.id} className="hover:bg-secondary/30">
+                <TableRow
+                  key={entry.id}
+                  className={`hover:bg-secondary/30 transition-colors duration-500 ${
+                    newIds.has(entry.id) ? "bg-primary/5" : ""
+                  }`}
+                >
                   <TableCell className="py-3">
                     <div className="flex items-center gap-2">
                       <div className="flex h-7 w-7 items-center justify-center rounded-md bg-secondary border border-border/50">
@@ -166,7 +174,7 @@ export function AuditLog() {
           </Table>
         </div>
         <p className="text-xs text-muted-foreground text-center mt-3">
-          Showing last 5 entries • Full audit trail available in compliance dashboard
+          Showing {entries.length} {entries.length === 1 ? "entry" : "entries"} • Updates every 3s
         </p>
       </CardContent>
     </Card>

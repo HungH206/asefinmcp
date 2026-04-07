@@ -1,6 +1,6 @@
 "use client"
 
-import { Shield, User, ChevronDown, LogOut, Settings } from "lucide-react"
+import { Shield, User, ChevronDown, LogOut, Settings, KeyRound } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -11,8 +11,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
+import { useVaultSession } from "@/hooks/useVaultSession"
 
 export function Header() {
+  const { session, signOut } = useVaultSession()
+
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="flex h-16 items-center justify-between px-6">
@@ -26,11 +29,23 @@ export function Header() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <Badge variant="outline" className="border-primary/30 bg-primary/5 text-primary text-xs px-3 py-1">
             <div className="h-1.5 w-1.5 rounded-full bg-primary mr-2 animate-pulse" />
             System Active
           </Badge>
+
+          {session.authenticated ? (
+            <Badge className="bg-primary/10 text-primary border-primary/20 text-xs px-3 py-1">
+              <KeyRound className="h-3 w-3 mr-1.5" />
+              Vault Connected
+            </Badge>
+          ) : (
+            <Badge className="bg-warning/10 text-warning border-warning/20 text-xs px-3 py-1">
+              <KeyRound className="h-3 w-3 mr-1.5" />
+              Vault Disconnected
+            </Badge>
+          )}
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -59,7 +74,10 @@ export function Header() {
                 Security Settings
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="flex items-center gap-2 text-destructive">
+              <DropdownMenuItem
+                className="flex items-center gap-2 text-destructive"
+                onClick={() => void signOut()}
+              >
                 <LogOut className="h-4 w-4" />
                 Sign Out
               </DropdownMenuItem>

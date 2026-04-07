@@ -30,7 +30,7 @@ pnpm-debug.log*
 
 # env files
 .env*.local
-
+app/api/.venv/
 # typescript
 *.tsbuildinfo
 next-env.d.ts

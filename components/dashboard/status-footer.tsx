@@ -1,15 +1,17 @@
 "use client"
 
-import { 
-  KeyRound, 
-  Server, 
-  Activity, 
-  Clock, 
+import { useEffect, useState } from "react"
+import {
+  KeyRound,
+  Server,
+  Activity,
+  Clock,
   Fingerprint,
   ShieldCheck,
-  Database
+  Database,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { useVaultSession } from "@/hooks/useVaultSession"
 
 interface StatusItemProps {
   label: string
@@ -35,20 +37,44 @@ function StatusItem({ label, status, icon, detail }: StatusItemProps) {
           <span className="text-sm font-medium">{label}</span>
           <div className={`h-1.5 w-1.5 rounded-full ${statusColors[status]} ${status === "online" ? "animate-pulse" : ""}`} />
         </div>
-        {detail && (
-          <span className="text-xs text-muted-foreground">{detail}</span>
-        )}
+        {detail && <span className="text-xs text-muted-foreground">{detail}</span>}
       </div>
     </div>
   )
 }
 
+function useLastSync() {
+  const [seconds, setSeconds] = useState(0)
+  useEffect(() => {
+    const interval = setInterval(() => setSeconds((s) => s + 1), 1000)
+    return () => clearInterval(interval)
+  }, [])
+  if (seconds < 60) return `${seconds}s ago`
+  return `${Math.floor(seconds / 60)}m ago`
+}
+
+function useSessionCountdown(totalSeconds = 8 * 60 * 60) {
+  const [remaining, setRemaining] = useState(totalSeconds)
+  useEffect(() => {
+    const interval = setInterval(() => setRemaining((s) => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(interval)
+  }, [])
+  const h = Math.floor(remaining / 3600)
+  const m = Math.floor((remaining % 3600) / 60)
+  const s = remaining % 60
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+}
+
 export function StatusFooter() {
+  const lastSync = useLastSync()
+  const countdown = useSessionCountdown()
+  const { session } = useVaultSession()
+
   return (
     <footer className="border-t border-border/50 bg-sidebar/50 backdrop-blur-sm">
       <div className="max-w-7xl mx-auto px-6 py-5">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* System Status */}
           <div>
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
               System Status
@@ -56,20 +82,19 @@ export function StatusFooter() {
             <div className="flex flex-col gap-2">
               <StatusItem
                 label="Token Vault"
-                status="online"
+                status={session.authenticated ? "online" : "warning"}
                 icon={<KeyRound className="h-4 w-4 text-primary" />}
-                detail="AES-256 Encrypted"
+                detail={session.authenticated ? "Auth0 Session Active" : "Not Connected"}
               />
               <StatusItem
                 label="MCP Server"
                 status="online"
                 icon={<Server className="h-4 w-4 text-accent" />}
-                detail="v2.4.1 - 23ms latency"
+                detail="Next.js Route Handlers Active"
               />
             </div>
           </div>
 
-          {/* Security Modules */}
           <div>
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
               Security Modules
@@ -79,18 +104,17 @@ export function StatusFooter() {
                 label="MFA Provider"
                 status="online"
                 icon={<Fingerprint className="h-4 w-4 text-primary" />}
-                detail="Auth0 - TOTP Ready"
+                detail="Auth0 — Step-up Ready"
               />
               <StatusItem
                 label="Guardrail Engine"
                 status="online"
                 icon={<ShieldCheck className="h-4 w-4 text-primary" />}
-                detail="Policy v3.2 Active"
+                detail="High-Stakes Detection Active"
               />
             </div>
           </div>
 
-          {/* Data Connections */}
           <div>
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
               Data Connections
@@ -100,26 +124,25 @@ export function StatusFooter() {
                 label="Market Feed"
                 status="online"
                 icon={<Activity className="h-4 w-4 text-chart-3" />}
-                detail="Real-time - 145 symbols"
+                detail="MCP Tool — Key Vaulted"
               />
               <StatusItem
                 label="Secure Store"
                 status="online"
                 icon={<Database className="h-4 w-4 text-accent" />}
-                detail="PostgreSQL - Encrypted"
+                detail="In-memory — swap for DB"
               />
             </div>
           </div>
         </div>
 
-        {/* Footer bar */}
         <div className="flex items-center justify-between mt-5 pt-4 border-t border-border/30">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Clock className="h-3.5 w-3.5" />
-            <span>Last sync: 2 seconds ago</span>
+            <span>Last sync: {lastSync}</span>
           </div>
           <Badge variant="outline" className="border-primary/20 text-primary/80 text-xs">
-            Session Expires in 28:45
+            Session Expires in {countdown}
           </Badge>
         </div>
       </div>

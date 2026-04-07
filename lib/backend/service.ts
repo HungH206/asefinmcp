@@ -126,11 +126,30 @@ export function getMarketCards(): FinancialCardData[] {
 }
 
 export function getAuditEntries(): AuditEntryData[] {
-  return auditEntries
+  return [...auditEntries].reverse()
+}
+
+export function appendAuditEntry(entry: Omit<AuditEntryData, "id" | "timestamp">): AuditEntryData {
+  const newEntry: AuditEntryData = {
+    ...entry,
+    id: crypto.randomUUID(),
+    timestamp: new Intl.DateTimeFormat("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    }).format(new Date()),
+  }
+  auditEntries.push(newEntry)
+  return newEntry
 }
 
 export function getConversation(): ChatMessageData[] {
   return conversation
+}
+
+export function appendConversationMessages(...messages: ChatMessageData[]): void {
+  conversation = [...conversation, ...messages]
 }
 
 function formatTime(date: Date): string {

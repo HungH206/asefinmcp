@@ -1,13 +1,53 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { Bot, User, Send, Sparkles, AlertTriangle } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { Bot, User, Send, Sparkles, AlertTriangle, Loader2, KeyRound } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import type { ChatMessageData, ChatResponse } from "@/lib/backend/types"
-import { callAsefinTool } from "@/lib/backend/mcp-client" // Ensure this path exists
+import type { GuardrailActionContext } from "@/components/dashboard/security-guardrail"
+import { callAsefinTool } from "@/lib/backend/mcp-client"
+import { TokenVaultConsent } from "@/components/auth0-ai/TokenVault"
+import { useVaultSession } from "@/hooks/useVaultSession"
+
+type ToolResult = Record<string, unknown>
+
+function formatToolResult(toolName: string, result: ToolResult): { content: string; source: string; confidence: number } {
+  switch (toolName) {
+    case "get_market_brief": {
+      const { ticker, price, change } = result
+      return {
+        content: `${String(ticker)} is currently trading at ${String(price)}, ${String(change)} today. Data retrieved securely — the raw API key was never exposed to this session.`,
+        source: "ASEFIN Market Vault",
+        confidence: 99,
+      }
+    }
+    case "analyze_portfolio": {
+      const { total_value, weighted_volatility, risk, top_position } = result
+      return {
+        content: `Portfolio analysis complete. Total value: ${String(total_value)}. Weighted volatility: ${String(weighted_volatility)} — risk level is ${String(risk)}. Largest position: ${String(top_position)}.`,
+        source: "Risk Assessment Module",
+        confidence: 94,
+      }
+    }
+    case "get_balance": {
+      const { account, balance, currency } = result
+      return {
+        content: `Your ${String(account)} account balance is ${String(balance)} ${String(currency)}, retrieved securely from the Auth0 Token Vault.`,
+        source: "Auth0 Token Vault",
+        confidence: 100,
+      }
+    }
+    default:
+      return {
+        content: `Tool result: ${JSON.stringify(result)}`,
+        source: "ASEFIN Vault",
+        confidence: 90,
+      }
+  }
+}
 
 function MessageBubble({ message }: { message: ChatMessageData }) {
   const isAgent = message.role === "agent"
@@ -73,11 +113,23 @@ function MessageBubble({ message }: { message: ChatMessageData }) {
   )
 }
 
-export function ChatInterface() {
+interface ChatInterfaceProps {
+  onHighStakes?: (ctx: GuardrailActionContext) => void
+}
+
+export function ChatInterface({ onHighStakes }: ChatInterfaceProps) {
+  const { session } = useVaultSession()
   const [messages, setMessages] = useState<ChatMessageData[]>([])
   const [input, setInput] = useState("")
   const [isSending, setIsSending] = useState(false)
+  const [isToolPending, setIsToolPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [interrupt, setInterrupt] = useState<{ connection: string; requiredScopes: string[]; resume: () => void } | null>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages, isToolPending])
 
   useEffect(() => {
     let mounted = true
@@ -129,39 +181,71 @@ export function ChatInterface() {
       }
 
       const data = (await response.json()) as ChatResponse & {
-        toolCall?: { name: string; args?: unknown }
+        toolCall?: { name: string; args?: unknown } | null
+        interrupt?: { connection: string; requiredScopes: string[] }
       }
 
-      // 2. CHECK FOR TOOL CALLS: If the AI wants to use an MCP Tool (e.g., get_balance)
-      if (data.toolCall) {
-        try {
-          const toolResult = (await callAsefinTool(data.toolCall.name, data.toolCall.args)) as {
-            result?: string
-          }
+      // LangGraph returned a vault interrupt — show TokenVaultConsent
+      if (data.interrupt) {
+        setMessages((current) => [...current, data.userMessage, data.agentMessage])
+        setInterrupt({
+          connection: data.interrupt.connection,
+          requiredScopes: data.interrupt.requiredScopes,
+          resume: () => setInterrupt(null),
+        })
+        setInput("")
+        return
+      }
 
-          // Add the tool result to your message state
+      // 2. CHECK FOR TOOL CALLS (high-stakes path still uses MCP route directly)
+      if (data.toolCall) {
+        setIsToolPending(true)
+        try {
+          const toolResult = (await callAsefinTool(data.toolCall.name, data.toolCall.args)) as { result?: ToolResult }
+          const formatted = formatToolResult(data.toolCall.name, toolResult.result ?? {})
+
           setMessages((current) => [
             ...current,
             data.userMessage,
             {
               id: Date.now().toString(),
               role: "agent",
-              content: `Analysis Complete: ${toolResult.result ?? "No result returned"}`,
-              metadata: { source: "ASEFIN Vault", confidence: 98 },
+              content: formatted.content,
+              metadata: { source: formatted.source, confidence: formatted.confidence },
               timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             },
           ])
         } catch (err: unknown) {
-          // 3. STEP-UP AUTH TRIGGER: If the tool returns 401/MFA required
+          // 3. STEP-UP AUTH TRIGGER
           if (err instanceof Error && err.message === "MFA_REQUIRED") {
-            setError("Action Blocked: Please complete MFA verification.")
-            // Trigger your Auth0 MFA popup here
+            setMessages((current) => [...current, data.userMessage])
+            setInterrupt({
+              connection: "google-oauth2",
+              requiredScopes: ["https://www.googleapis.com/auth/gmail.send"],
+              resume: () => {
+                void callAsefinTool("send_financial_report_email", {
+                  recipient: "accountant@trustedpartner.com",
+                  subject: "Portfolio Report",
+                }).then(() => setInterrupt(null))
+              },
+            })
           } else {
             setError("Tool call failed")
           }
+        } finally {
+          setIsToolPending(false)
         }
       } else {
         setMessages((current) => [...current, data.userMessage, data.agentMessage])
+        // Fire guardrail if agent flagged this as high-stakes
+        if (data.agentMessage.metadata?.action === "high-stakes") {
+          onHighStakes?.({
+            action: "Send Financial Report via Email",
+            recipient: "accountant@trustedpartner.com",
+            docType: "Portfolio Performance Report",
+            requestedBy: "Narrator Agent",
+          })
+        }
       }
 
       setInput("")
@@ -174,6 +258,18 @@ export function ChatInterface() {
 
   return (
     <div className="flex flex-col h-full border border-border/50 rounded-lg bg-card/50 overflow-hidden">
+      {interrupt && (
+        <TokenVaultConsent
+          mode="auto"
+          interrupt={interrupt}
+          onFinish={() => setInterrupt(null)}
+          connectWidget={{
+            title: "Connect Google Account",
+            description: "ASEFIN needs permission to send emails on your behalf via Gmail.",
+            action: { label: "Authorize Gmail" },
+          }}
+        />
+      )}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-secondary/30">
         <div className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 border border-primary/20">
@@ -181,13 +277,33 @@ export function ChatInterface() {
           </div>
           <div>
             <h3 className="text-sm font-semibold">The Narrator</h3>
-            <p className="text-xs text-muted-foreground">AI Financial Intelligence Agent</p>
+            <p className="text-xs text-muted-foreground">LangGraph · AI Financial Intelligence Agent</p>
           </div>
         </div>
         <Badge className="bg-primary/10 text-primary border-primary/20 hover:bg-primary/20">
           <div className="h-1.5 w-1.5 rounded-full bg-primary mr-1.5 animate-pulse" />
           Active
         </Badge>
+        {session.authenticated ? (
+          <Badge className="bg-primary/10 text-primary border-primary/20 text-xs">
+            <KeyRound className="h-3 w-3 mr-1" />
+            Vault Connected
+          </Badge>
+        ) : (
+          <Badge
+            className="bg-warning/10 text-warning border-warning/20 text-xs cursor-pointer hover:bg-warning/20"
+            onClick={() => {
+              window.open(
+                `/auth/connect?connection=google-oauth2&scopes=https://www.googleapis.com/auth/gmail.send&returnTo=/close&popup=1`,
+                "_blank",
+                "width=800,height=650,status=no,toolbar=no,menubar=no"
+              )
+            }}
+          >
+            <KeyRound className="h-3 w-3 mr-1" />
+            Connect Vault
+          </Badge>
+        )}
       </div>
 
       <ScrollArea className="flex-1 p-4">
@@ -199,6 +315,13 @@ export function ChatInterface() {
             <p className="text-sm text-muted-foreground">Loading conversation...</p>
           )}
           {error && <p className="text-sm text-destructive">{error}</p>}
+          {isToolPending && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground px-1">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span>Narrator is querying the secure vault...</span>
+            </div>
+          )}
+          <div ref={bottomRef} />
         </div>
       </ScrollArea>
 

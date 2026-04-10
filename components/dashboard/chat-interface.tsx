@@ -189,7 +189,7 @@ export function ChatInterface({ onHighStakes }: ChatInterfaceProps) {
       }
 
       const data = (await response.json()) as ChatResponse & {
-        toolCall?: { name: string; args?: unknown } | null
+        toolCall?: { name: string; args?: Record<string, unknown> } | null
         interrupt?: { connection: string; requiredScopes: string[] }
       }
 
@@ -209,7 +209,7 @@ export function ChatInterface({ onHighStakes }: ChatInterfaceProps) {
       if (data.toolCall) {
         setIsToolPending(true)
         try {
-          const toolResult = (await callAsefinTool(data.toolCall.name, data.toolCall.args)) as { result?: ToolResult }
+          const toolResult = (await callAsefinTool(data.toolCall.name, data.toolCall.args ?? {})) as { result?: ToolResult }
           const formatted = formatToolResult(data.toolCall.name, toolResult.result ?? {})
 
           setMessages((current) => [

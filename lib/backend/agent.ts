@@ -5,7 +5,7 @@ import { HumanMessage, AIMessage } from "@langchain/core/messages"
 import { z } from "zod"
 import { appendAuditEntry } from "@/lib/backend/service"
 import { sendGmail } from "@/lib/backend/gmail"
-import { getVaultToken, TokenVaultInterrupt } from "@/lib/backend/tokenVault"
+import { getVaultToken, getVaultTokenFromAccessToken, TokenVaultInterrupt } from "@/lib/backend/tokenVault"
 import type { ChatMessageData } from "@/lib/backend/types"
 
 // Re-export so chat route only needs one import
@@ -90,7 +90,7 @@ export function buildTools(refreshToken: string | null) {
       recipient: z.string().email().describe("Email address to send the report to"),
     }),
     func: async ({ recipient }) => {
-      // No refresh token — user hasn't connected Google yet
+      // No refresh token — user hasn't authenticated yet
       if (!refreshToken) {
         throw new TokenVaultInterrupt({
           connection: "google-oauth2",
@@ -100,11 +100,22 @@ export function buildTools(refreshToken: string | null) {
 
       // Exchange Auth0 refresh token for a Google OAuth access token via Token Vault
       // This is the with_token_vault() equivalent — Google token never touches the LLM
-      const { accessToken: googleToken } = await getVaultToken(
-        refreshToken,
-        "google-oauth2",
-        ["https://www.googleapis.com/auth/gmail.send"]
-      )
+      let googleToken: string
+      try {
+        const primary = await getVaultToken(
+          refreshToken,
+          "google-oauth2",
+          ["https://www.googleapis.com/auth/gmail.send"]
+        )
+        googleToken = primary.accessToken
+      } catch (err) {
+        if (err instanceof TokenVaultInterrupt && err.reason?.includes("federated_connection_refresh_token_not_found")) {
+          // Agent path may only have refresh token available; fallback requires access token and
+          // is therefore only feasible in API routes where vault_session is available.
+          throw err
+        }
+        throw err
+      }
 
       const apiKey = process.env.EODHD_API_KEY
       const tickers = ["AAPL", "TSLA", "MSFT", "GOOGL"]

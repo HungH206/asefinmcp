@@ -70,6 +70,14 @@ export function StatusFooter() {
   const lastSync = useLastSync()
   const countdown = useSessionCountdown()
   const { session } = useVaultSession()
+  const vaultStatus = session.hasRefreshToken ? "online" : "warning"
+  const vaultDetail = session.hasRefreshToken
+    ? session.hasMfaProof
+      ? "Refresh token + recent MFA proof"
+      : "Refresh token ready for Gmail"
+    : session.hasAccessToken
+      ? "Auth0 session active, but consent still missing"
+      : "Not Connected"
 
   return (
     <footer className="border-t border-border/50 bg-sidebar/50 backdrop-blur-sm">
@@ -82,9 +90,9 @@ export function StatusFooter() {
             <div className="flex flex-col gap-2">
               <StatusItem
                 label="Token Vault"
-                status={session.authenticated ? "online" : "warning"}
+                status={vaultStatus}
                 icon={<KeyRound className="h-4 w-4 text-primary" />}
-                detail={session.authenticated ? "Auth0 Session Active" : "Not Connected"}
+                detail={vaultDetail}
               />
               <StatusItem
                 label="MCP Server"

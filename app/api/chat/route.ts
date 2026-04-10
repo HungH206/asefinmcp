@@ -65,7 +65,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ userMessage, agentMessage, toolCall: null })
     }
 
-    // Extract refresh token from cookie — used by Token Vault to get Google OAuth token
+    // Extract refresh token from cookie — used by Token Vault refresh-token exchange
     const cookieStore = await cookies()
     const refreshToken = cookieStore.get("vault_refresh_token")?.value ?? null
 

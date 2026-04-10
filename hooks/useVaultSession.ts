@@ -5,6 +5,10 @@ import { useEffect, useState } from "react"
 interface VaultSession {
   authenticated: boolean
   hasAccessToken?: boolean
+  hasRefreshToken?: boolean
+  hasMfaProof?: boolean
+  stepUpMissingMfa?: boolean
+  mfaVerifiedUntil?: number | null
   tokenType?: string
 }
 
@@ -16,7 +20,7 @@ export function useVaultSession() {
 
     const check = async () => {
       try {
-        const res = await fetch("/api/auth/session")
+        const res = await fetch("/api/auth/session", { cache: "no-store" })
         if (res.ok && mounted) {
           const data = (await res.json()) as VaultSession
           setSession(data)
@@ -36,7 +40,7 @@ export function useVaultSession() {
   }, [])
 
   const signOut = async () => {
-    await fetch("/api/auth/session", { method: "DELETE" })
+    await fetch("/api/auth/session", { method: "DELETE", cache: "no-store" })
     setSession({ authenticated: false })
   }
 

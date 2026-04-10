@@ -55,11 +55,11 @@ export function StockChart() {
     setError(null)
     try {
       const res = await fetch(`/api/market/chart?ticker=${t}`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json() as { points: ChartPoint[]; source: string }
+      const data = await res.json() as { points?: ChartPoint[]; source?: string; detail?: string; error?: string }
+      if (!res.ok) throw new Error(data.detail ?? data.error ?? `HTTP ${res.status}`)
       if (!data.points?.length) throw new Error("No data returned")
       setPoints(data.points)
-      setSource(data.source)
+      setSource(data.source ?? "")
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load chart")
     } finally {
@@ -90,7 +90,7 @@ export function StockChart() {
         {/* Title row */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
-            <CardTitle className="text-base font-semibold text-white">Intraday Chart</CardTitle>
+            <CardTitle className="text-base font-semibold text-white">EOD Report</CardTitle>
             {points.length > 0 && (
               <div className="flex items-center gap-2">
                 <span className="text-2xl font-bold text-white">${last.toFixed(2)}</span>
@@ -135,10 +135,10 @@ export function StockChart() {
             className="text-xs px-2 py-0.5 font-semibold border-0"
             style={{ background: `${tickerColor}25`, color: tickerColor }}
           >
-            {ticker} · Today
+            {ticker} · 30 Sessions
           </Badge>
           <Badge style={{ background: "#1a1a2e", color: "#555", border: "1px solid #2a2a4a", fontSize: 11, borderRadius: 6, padding: "2px 8px" }}>
-            {source === "eodhd" ? "Live · EODHD" : "Simulated"}
+            {source === "eodhd" ? "Live · EODHD" : source === "mock" ? "Simulated" : "Unavailable"}
           </Badge>
           {points.length > 0 && (
             <span className="text-xs ml-auto" style={{ color: "#555" }}>

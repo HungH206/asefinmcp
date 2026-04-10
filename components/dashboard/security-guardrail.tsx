@@ -19,6 +19,8 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 
+const REQUIRE_MFA_FOR_EMAIL_REPORTS = process.env.NEXT_PUBLIC_REQUIRE_MFA_FOR_REPORTS === "true"
+
 export interface GuardrailActionContext {
   action: string
   recipient?: string
@@ -40,24 +42,87 @@ export function SecurityGuardrail({ isOpen, onClose, onVerify, onDeny, actionCon
   const [isVerifying, setIsVerifying] = useState(false)
   const [isVerified, setIsVerified] = useState(false)
   const [recipient, setRecipient] = useState("")
+  const [verifyError, setVerifyError] = useState<string | null>(null)
 
   useEffect(() => {
     if (isOpen) {
       setIsVerifying(false)
       setIsVerified(false)
       setRecipient(actionContext?.recipient ?? "")
+      setVerifyError(null)
     }
   }, [isOpen, actionContext])
 
-  const handleVerify = () => {
+  const handleVerify = async () => {
+    setVerifyError(null)
     setIsVerifying(true)
-    setTimeout(() => {
+
+    if (!REQUIRE_MFA_FOR_EMAIL_REPORTS) {
+      setTimeout(() => {
+        setIsVerifying(false)
+        setIsVerified(true)
+        setTimeout(() => {
+          onVerify({ ...(actionContext ?? { action: "Action" }), recipient: recipient || actionContext?.recipient })
+        }, 300)
+      }, 400)
+      return
+    }
+
+    const search = new URLSearchParams({
+      connection: "google-oauth2",
+      scopes: "https://www.googleapis.com/auth/gmail.send",
+      returnTo: "/close",
+      popup: "1",
+      stepUp: "1",
+      prompt: "login",
+      max_age: "0",
+      acr_values: "http://schemas.openid.net/pape/policies/2007/06/multi-factor",
+    })
+
+    const authUrl = `/auth/connect?${search.toString()}`
+    const popup = window.open(
+      authUrl,
+      "_blank",
+      "width=800,height=650,status=no,toolbar=no,menubar=no"
+    )
+
+    if (!popup) {
+      setIsVerifying(false)
+      setVerifyError("Popup was blocked. Please allow popups and try again.")
+      return
+    }
+
+    const waitForStepUpResult = async () => {
+      while (!popup.closed) {
+        await new Promise((resolve) => setTimeout(resolve, 750))
+      }
+
+      const sessionRes = await fetch("/api/auth/session", { cache: "no-store" })
+      if (!sessionRes.ok) {
+        throw new Error("Unable to confirm MFA status")
+      }
+
+      const session = (await sessionRes.json()) as { hasMfaProof?: boolean; stepUpMissingMfa?: boolean }
+      if (!session.hasMfaProof) {
+        if (session.stepUpMissingMfa) {
+          throw new Error("Auth0 login succeeded, but MFA was not enforced by tenant policy (missing amr:mfa)")
+        }
+        throw new Error("MFA step-up was not completed")
+      }
+    }
+
+    try {
+      await waitForStepUpResult()
       setIsVerifying(false)
       setIsVerified(true)
       setTimeout(() => {
         onVerify({ ...(actionContext ?? { action: "Action" }), recipient: recipient || actionContext?.recipient })
-      }, 1500)
-    }, 2000)
+      }, 600)
+    } catch (err) {
+      setIsVerifying(false)
+      setIsVerified(false)
+      setVerifyError(err instanceof Error ? err.message : "Verification failed")
+    }
   }
 
   const handleDeny = () => {
@@ -88,7 +153,9 @@ export function SecurityGuardrail({ isOpen, onClose, onVerify, onDeny, actionCon
               </Badge>
               <h2 className="text-xl font-semibold tracking-tight">Step-up Authentication Required</h2>
               <p className="text-sm text-muted-foreground mt-1">
-                This action requires additional verification to proceed
+                {REQUIRE_MFA_FOR_EMAIL_REPORTS
+                  ? "This action requires additional verification to proceed"
+                  : "Review and approve this action to proceed"}
               </p>
             </div>
           </div>
@@ -173,6 +240,11 @@ export function SecurityGuardrail({ isOpen, onClose, onVerify, onDeny, actionCon
             </div>
           ) : (
             <>
+              {verifyError && (
+                <p className="w-full rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {verifyError}
+                </p>
+              )}
               <Button
                 className="w-full h-12 bg-warning text-warning-foreground hover:bg-warning/90"
                 onClick={handleVerify}
@@ -181,7 +253,7 @@ export function SecurityGuardrail({ isOpen, onClose, onVerify, onDeny, actionCon
                 {isVerifying ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Verifying Identity...
+                    Waiting for Auth0 MFA...
                   </>
                 ) : (
                   <>

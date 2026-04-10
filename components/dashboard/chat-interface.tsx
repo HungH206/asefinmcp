@@ -117,6 +117,14 @@ interface ChatInterfaceProps {
   onHighStakes?: (ctx: GuardrailActionContext) => void
 }
 
+type ToolInterrupt = {
+  connection: string
+  requiredScopes: string[]
+  authorizationParams?: Record<string, string>
+}
+
+type ToolClientError = Error & { interrupt?: ToolInterrupt }
+
 export function ChatInterface({ onHighStakes }: ChatInterfaceProps) {
   const { session } = useVaultSession()
   const [messages, setMessages] = useState<ChatMessageData[]>([])
@@ -124,7 +132,7 @@ export function ChatInterface({ onHighStakes }: ChatInterfaceProps) {
   const [isSending, setIsSending] = useState(false)
   const [isToolPending, setIsToolPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [interrupt, setInterrupt] = useState<{ connection: string; requiredScopes: string[]; resume: () => void } | null>(null)
+  const [interrupt, setInterrupt] = useState<{ connection: string; requiredScopes: string[]; authorizationParams?: Record<string, string>; resume: () => void } | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -218,10 +226,12 @@ export function ChatInterface({ onHighStakes }: ChatInterfaceProps) {
         } catch (err: unknown) {
           // 3. STEP-UP AUTH TRIGGER
           if (err instanceof Error && err.message === "MFA_REQUIRED") {
+            const interruptFromError = (err as ToolClientError).interrupt
             setMessages((current) => [...current, data.userMessage])
             setInterrupt({
-              connection: "google-oauth2",
-              requiredScopes: ["https://www.googleapis.com/auth/gmail.send"],
+              connection: interruptFromError?.connection ?? "google-oauth2",
+              requiredScopes: interruptFromError?.requiredScopes ?? ["https://www.googleapis.com/auth/gmail.send"],
+              authorizationParams: interruptFromError?.authorizationParams,
               resume: () => {
                 void callAsefinTool("send_financial_report_email", {
                   recipient: "accountant@trustedpartner.com",
@@ -284,10 +294,24 @@ export function ChatInterface({ onHighStakes }: ChatInterfaceProps) {
           <div className="h-1.5 w-1.5 rounded-full bg-primary mr-1.5 animate-pulse" />
           Active
         </Badge>
-        {session.authenticated ? (
+        {session.hasRefreshToken ? (
           <Badge className="bg-primary/10 text-primary border-primary/20 text-xs">
             <KeyRound className="h-3 w-3 mr-1" />
             Vault Connected
+          </Badge>
+        ) : session.hasAccessToken ? (
+          <Badge
+            className="bg-warning/10 text-warning border-warning/20 text-xs cursor-pointer hover:bg-warning/20"
+            onClick={() => {
+              window.open(
+                `/auth/connect?connection=google-oauth2&scopes=https://www.googleapis.com/auth/gmail.send&returnTo=/close&popup=1`,
+                "_blank",
+                "width=800,height=650,status=no,toolbar=no,menubar=no"
+              )
+            }}
+          >
+            <KeyRound className="h-3 w-3 mr-1" />
+            Consent Needed
           </Badge>
         ) : (
           <Badge

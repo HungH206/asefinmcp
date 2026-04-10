@@ -1,4 +1,12 @@
-export async function callAsefinTool(toolName: string, args: any) {
+type ToolInterrupt = {
+  connection: string
+  requiredScopes: string[]
+  authorizationParams?: Record<string, string>
+}
+
+type ToolError = Error & { interrupt?: ToolInterrupt }
+
+export async function callAsefinTool(toolName: string, args: Record<string, unknown>) {
   const response = await fetch('/api/mcp/tools/call', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -10,9 +18,10 @@ export async function callAsefinTool(toolName: string, args: any) {
 
   if (!response.ok) {
     const error = await response.json();
-    // Handle the "Step-up Auth" trigger here later!
     if (response.status === 401) {
-       throw new Error("MFA_REQUIRED");
+      const mfaError = new Error("MFA_REQUIRED") as ToolError
+      mfaError.interrupt = error?.detail?.interrupt as ToolInterrupt | undefined
+      throw mfaError
     }
     throw new Error(error.detail || "Failed to call tool");
   }
